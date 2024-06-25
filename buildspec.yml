@@ -1,0 +1,11 @@
+version: 0.2
+
+phases:
+  install:
+    commands:
+      - echo Installing AWS CLI
+      - pip install awscli
+  build:
+    commands:
+      - echo Deploying CloudFormation template
+      - aws cloudformation deploy --template-file template.yml --stack-name my-cloudformation-stack --capabilities CAPABILITY_IAM
