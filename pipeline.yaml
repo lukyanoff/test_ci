@@ -1,29 +1,33 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'CloudFormation template to create a CodePipeline for deploying other CloudFormation templates'
-
-Parameters:
-  GitHubOwner:
-    Type: String
-    Description: GitHub owner name
-  GitHubRepo:
-    Type: String
-    Description: GitHub repository name
-  GitHubBranch:
-    Type: String
-    Description: GitHub branch name
-    Default: main
-  GitHubConnectionArn:
-    Type: String
-    Description: ARN of the GitHub connection
-
 Resources:
-  CodePipelineArtifactStore:
+  S3Bucket:
     Type: AWS::S3::Bucket
     Properties:
-      VersioningConfiguration:
-        Status: Enabled
+      BucketName: my-cicd-artifacts
 
-  CodePipelineServiceRole:
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CodeBuildAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:PutObjectAcl
+                Resource: arn:aws:s3:::my-cicd-artifacts/*
+
+  CodePipelineRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
@@ -34,37 +38,36 @@ Resources:
               Service: codepipeline.amazonaws.com
             Action: sts:AssumeRole
       Policies:
-        - PolicyName: CodePipelinePolicy
+        - PolicyName: CodePipelineAccess
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
                 Action:
-                  - s3:*
-                  - cloudformation:*
-                  - iam:PassRole
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:PutObjectAcl
+                  - codestar-connections:UseConnection
                 Resource: '*'
 
-  CloudFormationExecutionRole:
-    Type: AWS::IAM::Role
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
     Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: cloudformation.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/AdministratorAccess
+      Name: CloudFormationBuild
+      Source:
+        Type: CODEPIPELINE
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        Image: aws/codebuild/standard:4.0
+        ComputeType: BUILD_GENERAL1_SMALL
+      ServiceRole: !GetAtt CodeBuildRole.Arn
 
-  Pipeline:
+  CodePipeline:
     Type: AWS::CodePipeline::Pipeline
     Properties:
-      RoleArn: !GetAtt CodePipelineServiceRole.Arn
-      ArtifactStore:
-        Type: S3
-        Location: !Ref CodePipelineArtifactStore
+      RoleArn: !GetAtt CodePipelineRole.Arn
       Stages:
         - Name: Source
           Actions:
@@ -72,31 +75,45 @@ Resources:
               ActionTypeId:
                 Category: Source
                 Owner: AWS
-                Version: 1
                 Provider: CodeStarSourceConnection
-              Configuration:
-                ConnectionArn: !Ref GitHubConnectionArn
-                OwnerName: !Ref GitHubOwner
-                RepositoryName: !Ref GitHubRepo
-                BranchName: !Ref GitHubBranch
+                Version: '1'
               OutputArtifacts:
                 - Name: SourceOutput
+              Configuration:
+                ConnectionArn: arn:aws:codestar-connections:us-east-1:662397074844:connection/2102f77e-a771-49e5-86e7-b61eef232190
+                FullRepositoryId: your-github-account/test_ci
+                BranchName: main
+        - Name: Build
+          Actions:
+            - Name: BuildAction
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              InputArtifacts:
+                - Name: SourceOutput
+              OutputArtifacts:
+                - Name: BuildOutput
+              Configuration:
+                ProjectName: !Ref CodeBuildProject
         - Name: Deploy
           Actions:
             - Name: DeployAction
               ActionTypeId:
                 Category: Deploy
                 Owner: AWS
-                Version: 1
                 Provider: CloudFormation
-              Configuration:
-                ActionMode: CREATE_UPDATE
-                RoleArn: !GetAtt CloudFormationExecutionRole.Arn
-                StackName: MyApplicationStack
-                TemplatePath: SourceOutput::template.yaml
+                Version: '1'
               InputArtifacts:
-                - Name: SourceOutput
-
-Outputs:
-  PipelineUrl:
-    Value: !Sub https://console.aws.amazon.com/codesuite/codepipeline/pipelines/${Pipeline}/view?region=${AWS::Region}
+                - Name: BuildOutput
+              Configuration:
+                ActionMode: CHANGE_SET_REPLACE
+                ChangeSetName: my-change-set
+                StackName: my-cloudformation-stack
+                TemplatePath: BuildOutput::path/to/your/template.yaml
+                Capabilities: CAPABILITY_NAMED_IAM
+      ArtifactStore:
+        Type: S3
+        Location: !Ref S3Bucket
+      Name: MyPipeline
