@@ -1,23 +1,3 @@
-AWSTemplateFormatVersion: '2010-09-09'
-Description: Template to create an S3 bucket
-
-Resources:
-  MyS3Bucket:
-    Type: 'AWS::S3::Bucket'
-    Properties:
-      BucketName: !Sub '${AWS::StackName}-bucket'
-      VersioningConfiguration:
-        Status: Enabled
-
-Outputs:
-  BucketName:
-    Description: Name of the S3 bucket
-    Value: !Ref MyS3Bucket
-    Export:
-      Name: BucketName
-
-  BucketArn:
-    Description: ARN of the S3 bucket
-    Value: !GetAtt MyS3Bucket.Arn
-    Export:
-      Name: BucketArn
+template-file-path: test_stack.yaml
+parameters: {}
+tags: {}
